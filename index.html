@@ -69,7 +69,7 @@
             flex: none;
             width: 100%;
             margin-top: .5rem;
-
+            font-weight: bold;
         }
 
         .connected #connect {
@@ -90,10 +90,10 @@
         }
 
         .emotes summary {
-            padding-block: .5em;
+            padding-block: .5rem;
             cursor: pointer;
-            padding-inline-start: 1em;
-            ;
+            padding-inline-start: 1rem;
+            font-weight: bold;
         }
 
         .emote-list {
@@ -102,9 +102,19 @@
             list-style: none;
         }
 
+        .emote-type {
+            font-weight: bold;
+        }
+
+        div:not(:first-child) .emote-type {
+            padding-block: .5rem;
+        }
+
         .emote-list dd {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(56px, 1fr));
+            margin: 0;
+            justify-items: start;
         }
 
         .emote-list li {
