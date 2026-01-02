@@ -23,7 +23,7 @@
             display: none;
         }
 
-        ul {
+        .channels {
             display: grid;
             margin: 1rem;
             padding: 0;
@@ -33,24 +33,24 @@
         }
 
         @media(min-width: 600px) {
-            ul {
+            .channels {
                 margin: 3rem;
                 grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
             }
         }
 
-        ul li {
-            display: contents;
+        .channels li {
+            display: flex;
+            flex-flow: column;
         }
 
-        ul li a {
+        .channels li a {
             display: flex;
             flex-direction: row;
             flex-flow: wrap;
             align-items: center;
             justify-items: start;
             border: 1px solid #ccc;
-            border-radius: .5rem;
             padding: 1rem;
             text-decoration: none;
             color: inherit;
@@ -83,18 +83,39 @@
             vertical-align: middle;
             margin-right: .5rem;
         }
+
+        .emotes {
+            padding: .5em;
+            margin: 0;
+            list-style: none;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(28px, 1fr));
+        }
+        .emotes li {
+            display: contents;
+        }
+        .emote { 
+            display: block;
+            width: 28px;
+            height: 28px;
+            padding: 0;
+            border: 0;
+            background-color: none;
+            cursor: pointer;
+        }
+
     </style>
 </head>
 
 <body>
     <a href="" id="connect">Connect with Twitch</a>
-    <ul id="all" class="live-only"></ul>
+    <ul id="all" class="channels live-only"></ul>
     <div id="status">Loading...</div>
 
     <script>
         const clientId = 'g4dz9iya0onjuxarj2d7ueaceq4x8w';
         const redirectUri = window.location.href;
-        const scopes = "user:read:follows user:read:subscriptions"
+        const scopes = "user:read:follows user:read:subscriptions user:read:emotes"
         const connectUrl = `https://id.twitch.tv/oauth2/authorize` +
             `?client_id=${clientId}` +
             `&redirect_uri=${encodeURIComponent(redirectUri)}` +
@@ -106,6 +127,11 @@
         const getSubscriptionsUrl = 'https://api.twitch.tv/helix/subscriptions/user'; // GET broadcaster_id=
         const getUsersUrl = 'https://api.twitch.tv/helix/users'; // GET
         const getStreamsUrl = 'https://api.twitch.tv/helix/streams'; // GET user_id=
+        const getUserEmotes = 'https://api.twitch.tv/helix/chat/emotes/user'; // GET user_id= broadcaster_id=
+
+        const SCALE_SMALL = '1.0';
+        const SCALE_MEDIUM = '2.0';
+        const SCALE_LARGE = '3.0';
 
         if (window.location.hash && window.location.hash.includes('access_token')) {
             const fragmentParams = Object.fromEntries(new URLSearchParams(
@@ -255,7 +281,7 @@
 
         function updateLink(li) {
             const link = document.createElement('a');
-            link.href = `https://twitch.tv/${li.broadcaster_login}`;
+            link.href = `https://twitch.tv/${li.dataset.name}`;
 
             if (li.dataset.profileImageUrl) {
                 // li.dataset.profileImageUrl = 'https://static-cdn.jtvnw.net/jtv_user_pictures/twitchtv-profile_image-300x300.png';
@@ -286,8 +312,8 @@
             li.appendChild(link);
         }
 
-        function checkSubscriptions(userId, allChannelIds, forceRefresh = false) {
-            allChannelIds.forEach(async broadcasterId => {
+        function checkSubscriptions(userId, channelIds, forceRefresh = false) {
+            channelIds.forEach(async broadcasterId => {
                 const url = `${getSubscriptionsUrl}` +
                     `?broadcaster_id=${encodeURIComponent(broadcasterId)}` +
                     `&user_id=${encodeURIComponent(userId)}`
@@ -325,10 +351,10 @@
 
         }
 
-        async function checkLiveStatuses(userIds) {
+        async function checkLiveStatuses(channelIds) {
             const chunkSize = 100; // Twitch API limit
-            for (let i = 0; i < userIds.length; i += chunkSize) {
-                const chunk = userIds.slice(i, i + chunkSize);
+            for (let i = 0; i < channelIds.length; i += chunkSize) {
+                const chunk = channelIds.slice(i, i + chunkSize);
                 function fetchPage(cursor) {
                     let url = `${getStreamsUrl}?user_id=${chunk.map(id => encodeURIComponent(id)).join('&user_id=')}`;
                     if (cursor) {
@@ -337,9 +363,8 @@
 
                     return fetchData(url, false).then(response => {
                         const { data, pagination } = response ?? {};
-                        const liveIds = data?.map(stream => stream.user_id) || [];
-                        liveIds.forEach(liveId => {
-                            const li = document.querySelector(`#follow-${liveId}`);
+                        data.forEach(stream => {
+                            const li = document.querySelector(`#follow-${stream.user_id}`);
                             if (li) {
                                 li.classList.toggle('live', true);
                                 li.dataset.sortKey = parseInt(li.dataset.sortKey || '0', 10) + 10000; // live goes to top
@@ -359,10 +384,10 @@
             }
         }
 
-        async function fetchChannelImages(userIds, forceRefresh = false) {
+        async function fetchChannelImages(channelIds, forceRefresh = false) {
             const chunkSize = 100; // Twitch API limit
-            for (let i = 0; i < userIds.length; i += chunkSize) {
-                const chunk = userIds.slice(i, i + chunkSize);
+            for (let i = 0; i < channelIds.length; i += chunkSize) {
+                const chunk = channelIds.slice(i, i + chunkSize);
 
                 let url = getUsersUrl +
                     `?id=${chunk.map(id => encodeURIComponent(id)).join('&id=')}`;
@@ -379,6 +404,103 @@
                     });
                 });
             }
+        }
+
+        function pickScale(emote, scale) {
+            if (emote.scale.includes(scale)) {
+                return scale;
+            }
+            const hasMedium = emote.scale.includes(SCALE_MEDIUM);
+            // want small, try medium then large
+            if (scale === SCALE_SMALL) {
+                if (hasMedium) {
+                    return SCALE_MEDIUM;
+                }
+                return SCALE_LARGE;
+            }
+            // want medium, try large then small
+            if (scale === SCALE_MEDIUM) {
+                if (emote.scale.includes(SCALE_LARGE)) {
+                    return SCALE_LARGE;
+                }
+                return SCALE_SMALL;
+            }
+            // want large, try medium then small
+            if (hasMedium) {
+                return SCALE_MEDIUM;
+            }
+            return SCALE_SMALL;
+        }
+
+        function pickFormat(emote) {
+            if (emote.format.includes('animated')) {
+                return 'animated';
+            }
+            return 'static';
+        }
+
+        function pickTheme(emote) {
+            const prefersDark = !!window.matchMedia('(prefers-color-scheme: dark)')?.matches;
+            if (prefersDark && emote.theme_mode.includes('dark')) {
+                return 'dark';
+            }
+            if (!prefersDark && emote.theme_mode.includes('light')) {
+                return 'light';
+            }
+            return emote.theme_mode[0];
+        }
+
+        function buildEmoteUrl(template, emote, scale) {
+            let url = template;
+            url = url.replace('{{id}}', emote.id);
+            url = url.replace('{{scale}}', pickScale(emote, scale));
+            url = url.replace('{{theme_mode}}', pickTheme(emote));
+            url = url.replace('{{format}}', pickFormat(emote));
+            return url;
+        }
+
+        async function fetchChannelEmotes(userId, channelIds, forceRefresh = false) {
+            channelIds.forEach(async channelId => {
+                const li = document.querySelector(`#follow-${channelId}`);
+                if (li) {
+                    li.querySelector('.emotes')?.remove();
+                    const emotesList = li.appendChild(document.createElement('ul'));
+                    emotesList.classList.add('emotes');
+
+                    async function fetchEmotes(after) {
+                        const url = getUserEmotes +
+                            `?user_id=${userId}` +
+                            `&broadcaster_id=${channelId}`;
+                        if (after) {
+                            url += `&after=${after}`;
+                        }
+
+                        const response = await fetchData(url, true, 1440);
+                        const { data, pagination, template } =response ?? {};
+                        data?.forEach(emote => {
+                            const smallUrl = buildEmoteUrl(template, emote, SCALE_SMALL);
+                            const largeUrl = buildEmoteUrl(template, emote, SCALE_LARGE);
+                            const button = emotesList
+                                .appendChild(document.createElement('li'))
+                                .appendChild(document.createElement('button'));
+                            button.type = 'button';
+                            button.classList.add('emote');
+                            button.title = emote.name;
+                            const image = button.appendChild(document.createElement('img'));
+                            image.src = smallUrl;
+                        })
+
+                        if (pagination?.cursor) {
+                            return fetchEmotes(pagination.cursor);
+                        }
+                        return Promise.resolve();
+                    }
+
+                    await fetchEmotes();
+                }
+            })
+
+
         }
 
         function sortList(parentUl) {
@@ -414,6 +536,9 @@
                     status.textContent += ' Done.\n';
                     status.textContent += 'Grabbing images...';
                     await fetchChannelImages(allChannelIds);
+                    status.textContent += ' Done.\n';
+                    status.textContent += 'Fetching emotes...';
+                    await fetchChannelEmotes(userData.id, allChannelIds);
                     status.textContent += ' Done.\n';
                     status.textContent += 'All data loaded.';
                 });
