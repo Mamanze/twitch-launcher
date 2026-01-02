@@ -42,6 +42,7 @@
         .channels li {
             display: flex;
             flex-flow: column;
+            background: #111;
         }
 
         .channels li a {
@@ -50,10 +51,10 @@
             flex-flow: wrap;
             align-items: center;
             justify-items: start;
-            border: 1px solid #ccc;
             padding: 1rem;
             text-decoration: none;
             color: inherit;
+            background-color: #222;
         }
 
         .tier {
@@ -84,32 +85,48 @@
             margin-right: .5rem;
         }
 
-        .emotes {
+        .emotes summary {
+            padding-block: .5em;
+            cursor: pointer;
+            padding-inline-start: 1em;
+            ;
+        }
+
+        .emote-list {
             padding: .5em;
             margin: 0;
             list-style: none;
+        }
+
+        .emote-list dd {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(28px, 1fr));
         }
-        .emotes li {
+
+        .emote-list li {
             display: contents;
         }
-        .emote { 
+
+        .emote {
             display: block;
             width: 28px;
             height: 28px;
             padding: 0;
             border: 0;
-            background-color: none;
+            background-color: transparent;
             cursor: pointer;
         }
-
     </style>
 </head>
 
 <body>
     <a href="" id="connect">Connect with Twitch</a>
     <ul id="all" class="channels live-only"></ul>
+
+    <details class="emotes" id="all-emotes">
+        <summary>Emotes (tap to copy)</summary>
+        <div id="emote-container"></div>
+    </details>
     <div id="status">Loading...</div>
 
     <script>
@@ -128,6 +145,9 @@
         const getUsersUrl = 'https://api.twitch.tv/helix/users'; // GET
         const getStreamsUrl = 'https://api.twitch.tv/helix/streams'; // GET user_id=
         const getUserEmotes = 'https://api.twitch.tv/helix/chat/emotes/user'; // GET user_id= broadcaster_id=
+        const getChannelEmotes = 'https://api.twitch.tv/helix/chat/emotes'; // GET broadcaster_id=
+
+
 
         const SCALE_SMALL = '1.0';
         const SCALE_MEDIUM = '2.0';
@@ -142,6 +162,20 @@
 
             // Clear the fragment to avoid leaking the token
             history.replaceState(null, '', window.location.pathname + window.location.search);
+        }
+
+
+        const channelEmotes = {};
+
+
+
+        async function setClipboard(text) {
+            const type = "text/plain";
+            const clipboardItemData = {
+                [type]: text,
+            };
+            const clipboardItem = new ClipboardItem(clipboardItemData);
+            await navigator.clipboard.write([clipboardItem]);
         }
 
         async function getCachedToken() {
@@ -193,49 +227,60 @@
             localStorage.setItem(key, JSON.stringify(dataToStore));
         }
 
-        function fetchData(url, useCache = false, cacheExpiryInMinutes = 5, cacheNulls = false) {
+        async function fetchData(url, useCache = false, cacheExpiryInMinutes = 5, cacheNulls = false, keyOverride = null) {
+            const key = keyOverride ?? url;
+
             if (useCache) {
-                const cached = getCachedData(url, cacheExpiryInMinutes);
-                if (cached.found) return Promise.resolve(cached.value);
+                const cached = getCachedData(key, cacheExpiryInMinutes);
+                if (cached.found) return cached.value;
+
+                // slow down these requests to avoid rate limiting
+                await new Promise((resolve) => {
+                    setTimeout(() => resolve(), 20);
+                });
             }
 
-            return fetch(url, {
+            const response = await fetch(url, {
                 method: 'GET',
                 headers: {
                     'Authorization': `Bearer ${token}`,
                     'Client-Id': `${clientId}`
                 }
-            })
-                .then(res => {
-                    if (!res.ok) {
-                        if (useCache && cacheNulls && res.status === 404) {
-                            setCachedData(url, null);
-                            return null;
-                        }
-                        if (res.status === 401) {
-                            // Unauthorized, clear token
-                            setCachedData('token', null);
-                            return null;
-                            window.location.reload();
-                        }
-                    }
-                    return res.json();
-                }).then(data => {
-                    if (useCache) {
-                        setCachedData(url, data);
-                    }
-                    return data;
-                }).catch(err => {
-                    if (useCache && cacheNulls) {
-                        setCachedData(url, null);
-                        return null;
-                    }
-                    return Promise.reject(err);
-                });
+            });
+
+            if (!response.ok) {
+                if (response.status === 429) {
+                    // Rate limited, wait and retry
+                    const retryAfter = parseInt(response.headers.get('Retry-After') || '1', 10);
+                    await new Promise((resolve) => {
+                        setTimeout(() => resolve(), (retryAfter + 1) * 1000);
+                    });
+                    return fetchData(url, useCache, cacheExpiryInMinutes, cacheNulls, keyOverride);
+                }
+
+
+                if (useCache && cacheNulls && response.status === 404) {
+                    setCachedData(key, null);
+                    return null;
+                }
+                if (response.status === 401) {
+                    // Unauthorized, clear token
+                    setCachedData('token', null);
+                    return null;
+                    window.location.reload();
+                }
+            }
+            const data = await response.json();
+
+            if (useCache) {
+                setCachedData(key, data);
+            }
+
+            return data;
         }
 
         function fetchUserData() {
-            return fetchData(getUsersUrl).then((response) => {
+            return fetchData(getUsersUrl, keyOverride = 'user').then((response) => {
                 const { data } = response ?? {};
                 return data[0];
             });
@@ -318,7 +363,7 @@
                     `?broadcaster_id=${encodeURIComponent(broadcasterId)}` +
                     `&user_id=${encodeURIComponent(userId)}`
 
-                const response = await fetchData(url, !forceRefresh, 120, true).catch(() => null);
+                const response = await fetchData(url, !forceRefresh, 120, true, `sub${broadcasterId}`).catch(() => null);
 
                 if (!response) {
                     // not subscribed
@@ -459,60 +504,129 @@
             return url;
         }
 
-        async function fetchChannelEmotes(userId, channelIds, forceRefresh = false) {
-            channelIds.forEach(async channelId => {
-                const li = document.querySelector(`#follow-${channelId}`);
-                if (li) {
-                    li.querySelector('.emotes')?.remove();
-                    const emotesList = li.appendChild(document.createElement('ul'));
-                    emotesList.classList.add('emotes');
-
-                    async function fetchEmotes(after) {
-                        const url = getUserEmotes +
-                            `?user_id=${userId}` +
-                            `&broadcaster_id=${channelId}`;
-                        if (after) {
-                            url += `&after=${after}`;
-                        }
-
-                        const response = await fetchData(url, true, 1440);
-                        const { data, pagination, template } =response ?? {};
-                        data?.forEach(emote => {
-                            const smallUrl = buildEmoteUrl(template, emote, SCALE_SMALL);
-                            const largeUrl = buildEmoteUrl(template, emote, SCALE_LARGE);
-                            const button = emotesList
-                                .appendChild(document.createElement('li'))
-                                .appendChild(document.createElement('button'));
-                            button.type = 'button';
-                            button.classList.add('emote');
-                            button.title = emote.name;
-                            const image = button.appendChild(document.createElement('img'));
-                            image.src = smallUrl;
-                        })
-
-                        if (pagination?.cursor) {
-                            return fetchEmotes(pagination.cursor);
-                        }
-                        return Promise.resolve();
-                    }
-
-                    await fetchEmotes();
-                }
-            })
-
-
+        function getEmoteType(emote) {
+            switch (emote.emote_type) {
+                case 'follower':
+                    return { key: 'follower', name: 'Follower', sortKey: 80000 };
+                case 'bitstier':
+                    return { key: 'bits', name: 'Bits', sortKey: 90000 };
+                case 'subscriptions':
+                    return { key: `sub`, name: `Sub`, sortKey: 100000 };
+                case 'channelpoints':
+                    return { key: 'channelpoints', name: 'Channel Points', sortKey: 70000 };
+                case 'rewards':
+                    return { key: 'rewards', name: 'Rewards', sortKey: 60000 };
+                case 'hypetrain':
+                    return { key: 'hypetrain', name: 'Hype Train', sortKey: 50000 };
+                default:
+                    return { key: 'other', name: 'Other', sortKey: -1 };
+            }
         }
 
-        function sortList(parentUl) {
-            const ul = document.querySelector(`#${parentUl ?? 'subs'}`);
-            if (!ul) return;
-            const items = Array.from(ul.children);
+        function buildEmoteList(emotes, template, container) {
+            container.querySelector('.emote-list')?.remove();
+            const emotesList = container.appendChild(document.createElement('dl'));
+            emotesList.classList.add('emote-list');
+
+            const types = {};
+
+            emotes.forEach(emote => {
+                const emoteType = getEmoteType(emote);
+                if (!types[emoteType.key]) {
+                    const type = emotesList.appendChild(document.createElement('div'));
+                    type.dataset.sortKey = emoteType.sortKey;
+
+                    const dt = type.appendChild(document.createElement('dt'));
+                    dt.classList.add('emote-type');
+                    dt.textContent = emoteType.name;
+
+                    const dd = type.appendChild(document.createElement('dd'));
+                    types[emoteType.key] = dd;
+                }
+
+                const smallUrl = buildEmoteUrl(template, emote, SCALE_SMALL);
+                const largeUrl = buildEmoteUrl(template, emote, SCALE_LARGE);
+                const button = types[emoteType.key]
+                    .appendChild(document.createElement('button'));
+                button.addEventListener('click', async () => {
+                    await setClipboard(emote.name);
+                });
+                button.type = 'button';
+                button.classList.add('emote');
+                button.title = emote.name;
+                const image = button.appendChild(document.createElement('img'));
+                image.src = smallUrl;
+            })
+        }
+
+        async function fetchAllEmotes(userId, forceRefresh = false) {
+            let aTemplate = '';
+
+            function fetchPage(cursor) {
+                let key = 'allEmotes';
+                let url = `${getUserEmotes}` +
+                    `?user_id=${encodeURIComponent(userId)}`;
+
+                if (cursor) {
+                    url += `&after=${encodeURIComponent(cursor)}`;
+                    key += `-${cursor}`;
+                }
+
+                return fetchData(url, !forceRefresh, 120, keyOverride = key).then(response => {
+                    const { data, pagination, template } = response ?? {};
+                    aTemplate = template;
+
+                    let allEmotes = data ?? [];
+                    if (pagination?.cursor) {
+                        return fetchPage(pagination.cursor).then(nextEmotes => {
+                            allEmotes = allEmotes.concat(nextEmotes);
+                            return allEmotes;
+                        });
+                    } else {
+                        return allEmotes;
+                    }
+                });
+            }
+
+            const allEmotes = await fetchPage('');
+
+            allEmotes.forEach(emote => {
+                if (!emote.owner_id) return; // skip personal emotes
+                channelEmotes[emote.owner_id] = channelEmotes[emote.owner_id] || [];
+                channelEmotes[emote.owner_id].push(emote);
+            });
+
+            buildEmoteList(allEmotes, aTemplate, document.getElementById('all-emotes'));
+
+            sortList(document.getElementById('all-emotes').querySelector('.emote-list'));
+
+            document.querySelectorAll('#all li').forEach(li => {
+                li.querySelector('.emotes')?.remove();
+
+                const emotes = channelEmotes[li.dataset.id];
+                if (emotes) {
+                    const emoteDetails = li.appendChild(document.createElement('details'));
+                    emoteDetails.classList.add('emotes');
+                    const summary = emoteDetails.appendChild(document.createElement('summary'));
+                    summary.textContent = `Emotes (${emotes.length})`;
+
+                    buildEmoteList(emotes, aTemplate, emoteDetails);
+
+                    sortList(emoteDetails.querySelector('.emote-list'));
+                }
+            });
+        }
+
+        function sortList(parent) {
+            const list = typeof parent === 'string' ? document.querySelector(`#${parent}`) : parent;
+            if (!list) return;
+            const items = Array.from(list.children);
             items.sort((a, b) => {
                 const keyA = parseInt(a.dataset.sortKey || '0', 10);
                 const keyB = parseInt(b.dataset.sortKey || '0', 10);
                 return keyB - keyA; // higher tier first
             });
-            items.forEach(item => ul.appendChild(item));
+            items.forEach(item => list.appendChild(item));
         }
 
         let token = null;
@@ -538,7 +652,7 @@
                     await fetchChannelImages(allChannelIds);
                     status.textContent += ' Done.\n';
                     status.textContent += 'Fetching emotes...';
-                    await fetchChannelEmotes(userData.id, allChannelIds);
+                    await fetchAllEmotes(userData.id);
                     status.textContent += ' Done.\n';
                     status.textContent += 'All data loaded.';
                 });
