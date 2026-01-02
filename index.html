@@ -8,14 +8,18 @@
     <style>
         body {
             font-family: system-ui;
-        }
 
+            --mid-color: #EEE;
+            --high-color: #DDD;
+        }
 
         /* Dark theme */
         @media (prefers-color-scheme: dark) {
             body {
                 background-color: black;
                 color: white;
+                --mid-color: #111;
+                --high-color: #222;
             }
         }
 
@@ -42,7 +46,7 @@
         .channels li {
             display: flex;
             flex-flow: column;
-            background: #111;
+            background: var(--mid-color);
         }
 
         .channels li a {
@@ -54,7 +58,7 @@
             padding: 1rem;
             text-decoration: none;
             color: inherit;
-            background-color: #222;
+            background-color: var(--high-color);
         }
 
         .tier {
@@ -100,7 +104,7 @@
 
         .emote-list dd {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(28px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(56px, 1fr));
         }
 
         .emote-list li {
@@ -109,8 +113,6 @@
 
         .emote {
             display: block;
-            width: 28px;
-            height: 28px;
             padding: 0;
             border: 0;
             background-color: transparent;
@@ -413,7 +415,6 @@
                             if (li) {
                                 li.classList.toggle('live', true);
                                 li.dataset.sortKey = parseInt(li.dataset.sortKey || '0', 10) + 10000; // live goes to top
-                                li.style.fontWeight = 'bold';
                             }
                         });
                         if (pagination?.cursor) {
@@ -544,7 +545,7 @@
                     types[emoteType.key] = dd;
                 }
 
-                const smallUrl = buildEmoteUrl(template, emote, SCALE_SMALL);
+                const mediumUrl = buildEmoteUrl(template, emote, SCALE_MEDIUM);
                 const largeUrl = buildEmoteUrl(template, emote, SCALE_LARGE);
                 const button = types[emoteType.key]
                     .appendChild(document.createElement('button'));
@@ -555,7 +556,7 @@
                 button.classList.add('emote');
                 button.title = emote.name;
                 const image = button.appendChild(document.createElement('img'));
-                image.src = smallUrl;
+                image.src = mediumUrl;
             })
         }
 
