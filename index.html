@@ -1,0 +1,426 @@
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta name="locale" content="en">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Twitch launcher</title>
+    <style>
+        body {
+            font-family: system-ui;
+        }
+
+
+        /* Dark theme */
+        @media (prefers-color-scheme: dark) {
+            body {
+                background-color: black;
+                color: white;
+            }
+        }
+
+        .live-only> :not(.live) {
+            display: none;
+        }
+
+        ul {
+            display: grid;
+            margin: 1rem;
+            padding: 0;
+            list-style: none;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+        }
+
+        @media(min-width: 600px) {
+            ul {
+                margin: 3rem;
+                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            }
+        }
+
+        ul li {
+            display: contents;
+        }
+
+        ul li a {
+            display: flex;
+            flex-direction: row;
+            flex-flow: wrap;
+            align-items: center;
+            justify-items: start;
+            border: 1px solid #ccc;
+            border-radius: .5rem;
+            padding: 1rem;
+            text-decoration: none;
+            color: inherit;
+        }
+
+        .tier {
+            font-size: 1.5rem;
+        }
+
+        .name {
+            flex: none;
+            width: 100%;
+            margin-top: .5rem;
+
+        }
+
+        .connected #connect {
+            display: none;
+        }
+
+        #status {
+            white-space: pre-wrap;
+            margin: 1rem;
+        }
+
+        .profile-image {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            vertical-align: middle;
+            margin-right: .5rem;
+        }
+    </style>
+</head>
+
+<body>
+    <a href="" id="connect">Connect with Twitch</a>
+    <ul id="all" class="live-only"></ul>
+    <div id="status">Loading...</div>
+
+    <script>
+        const clientId = 'g4dz9iya0onjuxarj2d7ueaceq4x8w';
+        const redirectUri = window.location.href;
+        const scopes = "user:read:follows user:read:subscriptions"
+        const connectUrl = `https://id.twitch.tv/oauth2/authorize` +
+            `?client_id=${clientId}` +
+            `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+            `&response_type=token` +
+            `&scope=${encodeURIComponent(scopes)}`;
+        document.querySelector('#connect').setAttribute('href', connectUrl);
+
+        const getFollowingUrl = 'https://api.twitch.tv/helix/channels/followed'; // GET user_id=
+        const getSubscriptionsUrl = 'https://api.twitch.tv/helix/subscriptions/user'; // GET broadcaster_id=
+        const getUsersUrl = 'https://api.twitch.tv/helix/users'; // GET
+        const getStreamsUrl = 'https://api.twitch.tv/helix/streams'; // GET user_id=
+
+        if (window.location.hash && window.location.hash.includes('access_token')) {
+            const fragmentParams = Object.fromEntries(new URLSearchParams(
+                window.location.hash.substr(1) // skip the first char (#)
+            ));
+
+            setCachedData('token', fragmentParams['access_token']);
+
+            // Clear the fragment to avoid leaking the token
+            history.replaceState(null, '', window.location.pathname + window.location.search);
+        }
+
+        async function getCachedToken() {
+            const cachedToken = getCachedData('token', 60 * 24 * 7); // 7 days
+            if (!cachedToken.found) {
+                return null;
+            }
+
+            if (cachedToken.value == null) {
+                return null;
+            }
+
+            const valid = await fetch('https://id.twitch.tv/oauth2/validate', {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${cachedToken.value}`,
+                }
+            }).catch(() => {
+                return null;
+            });
+
+            if (!valid.ok) {
+                localStorage.removeItem('token');
+                return null;
+            }
+
+            return cachedToken.value;
+        }
+
+        function getCachedData(key, expiryInMinutes) {
+            const cached = localStorage.getItem(key);
+            if (!cached) return { value: null, found: false };
+
+            const { value, timestamp } = JSON.parse(cached);
+            const now = Date.now();
+            if ((now - timestamp) < expiryInMinutes * 60 * 1000) {
+                return { value, found: true }; // Cache is still valid
+            }
+
+            localStorage.removeItem(key); // Expired cache
+            return { value: null, found: false };
+        }
+
+        function setCachedData(key, value) {
+            const dataToStore = {
+                value,
+                timestamp: Date.now()
+            };
+            localStorage.setItem(key, JSON.stringify(dataToStore));
+        }
+
+        function fetchData(url, useCache = false, cacheExpiryInMinutes = 5, cacheNulls = false) {
+            if (useCache) {
+                const cached = getCachedData(url, cacheExpiryInMinutes);
+                if (cached.found) return Promise.resolve(cached.value);
+            }
+
+            return fetch(url, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Client-Id': `${clientId}`
+                }
+            })
+                .then(res => {
+                    if (!res.ok) {
+                        if (useCache && cacheNulls && res.status === 404) {
+                            setCachedData(url, null);
+                            return null;
+                        }
+                        if (res.status === 401) {
+                            // Unauthorized, clear token
+                            setCachedData('token', null);
+                            return null;
+                            window.location.reload();
+                        }
+                    }
+                    return res.json();
+                }).then(data => {
+                    if (useCache) {
+                        setCachedData(url, data);
+                    }
+                    return data;
+                }).catch(err => {
+                    if (useCache && cacheNulls) {
+                        setCachedData(url, null);
+                        return null;
+                    }
+                    return Promise.reject(err);
+                });
+        }
+
+        function fetchUserData() {
+            return fetchData(getUsersUrl).then((response) => {
+                const { data } = response ?? {};
+                return data[0];
+            });
+        }
+
+        async function fetchFollowing(userId, after, forceRefresh = false) {
+            const url = getFollowingUrl +
+                `?user_id=${encodeURIComponent(userId)}` +
+                `&after=${encodeURIComponent(after ?? '')}`;
+
+            const response = await fetchData(url, !forceRefresh, 60);
+
+            const { data, pagination, total } = response ?? {};
+            const ul = document.querySelector('#all');
+            data?.forEach(async follow => {
+                const li = ul.appendChild(document.createElement('li'));
+
+                li.id = `follow-${follow.broadcaster_id}`;
+                li.dataset.id = follow.broadcaster_id;
+                li.dataset.name = follow.broadcaster_name;
+                li.dataset.sortKey = '0';
+
+                updateLink(li);
+            });
+            if (pagination?.cursor) {
+                return fetchFollowing(userId, pagination.cursor);
+            }
+            return Promise.resolve();
+        }
+
+        function getTier(subData) {
+            switch (subData.tier) {
+                case '1000':
+                    return '💓';
+                case '2000':
+                    return '💖';
+                case '3000':
+                    return '❤️‍🔥';
+                default:
+                    return '';
+            }
+        }
+
+        function updateLink(li) {
+            const link = document.createElement('a');
+            link.href = `https://twitch.tv/${li.broadcaster_login}`;
+
+            if (li.dataset.profileImageUrl) {
+                // li.dataset.profileImageUrl = 'https://static-cdn.jtvnw.net/jtv_user_pictures/twitchtv-profile_image-300x300.png';
+                const img = link.appendChild(document.createElement('img'));
+                img.src = li.dataset.profileImageUrl;
+                img.alt = `${li.dataset.name} profile image`;
+                img.className = 'profile-image';
+            }
+
+            if (li.dataset.tier) {
+                const isGift = li.dataset.isGift === 'true';
+
+                li.classList.add(`tier-${li.dataset.tier / 1000}`);
+                li.classList.toggle('gift', isGift);
+
+                const tier = link.appendChild(document.createElement('span'));
+                tier.className = 'tier';
+                tier.textContent = getTier({ tier: li.dataset.tier }) + (isGift ? ' 🎁' : '');
+            } else {
+                li.classList.remove('tier-1', 'tier-2', 'tier-3');
+            }
+
+            const name = link.appendChild(document.createElement('span'));
+            name.textContent = li.dataset.name;
+            name.classList.add('name');
+
+            [...li.children].forEach(child => li.removeChild(child));
+            li.appendChild(link);
+        }
+
+        function checkSubscriptions(userId, allChannelIds, forceRefresh = false) {
+            allChannelIds.forEach(async broadcasterId => {
+                const url = `${getSubscriptionsUrl}` +
+                    `?broadcaster_id=${encodeURIComponent(broadcasterId)}` +
+                    `&user_id=${encodeURIComponent(userId)}`
+
+                const response = await fetchData(url, !forceRefresh, 120, true).catch(() => null);
+
+                if (!response) {
+                    // not subscribed
+                    return;
+                }
+
+                const { data } = response ?? {};
+                if (data?.length) {
+                    const li = document.querySelector(`#follow-${broadcasterId}`);
+
+                    const { tier, is_gift } = data[0];
+
+                    li.classList.add('subscribed');
+
+                    let sortKey = parseInt(li.dataset.sortKey || '0', 10);
+                    sortKey += parseInt(tier || '0', 10);
+
+                    if (!is_gift) {
+                        sortKey += 500; // gifts go before non-gifts of same tier
+                    }
+                    li.dataset.tier = tier;
+                    li.dataset.isGift = is_gift;
+                    li.dataset.sortKey = sortKey;
+
+                    updateLink(li);
+                }
+            });
+
+            sortList('all');
+
+        }
+
+        async function checkLiveStatuses(userIds) {
+            const chunkSize = 100; // Twitch API limit
+            for (let i = 0; i < userIds.length; i += chunkSize) {
+                const chunk = userIds.slice(i, i + chunkSize);
+                function fetchPage(cursor) {
+                    let url = `${getStreamsUrl}?user_id=${chunk.map(id => encodeURIComponent(id)).join('&user_id=')}`;
+                    if (cursor) {
+                        url += `&after=${encodeURIComponent(cursor)}`;
+                    }
+
+                    return fetchData(url, false).then(response => {
+                        const { data, pagination } = response ?? {};
+                        const liveIds = data?.map(stream => stream.user_id) || [];
+                        liveIds.forEach(liveId => {
+                            const li = document.querySelector(`#follow-${liveId}`);
+                            if (li) {
+                                li.classList.toggle('live', true);
+                                li.dataset.sortKey = parseInt(li.dataset.sortKey || '0', 10) + 10000; // live goes to top
+                                li.style.fontWeight = 'bold';
+                            }
+                        });
+                        if (pagination?.cursor) {
+                            return fetchPage(pagination.cursor);
+                        } else {
+                            return Promise.resolve;
+                        }
+                    }).then(() => {
+                        sortList('all');
+                    });
+                }
+                await fetchPage('');
+            }
+        }
+
+        async function fetchChannelImages(userIds, forceRefresh = false) {
+            const chunkSize = 100; // Twitch API limit
+            for (let i = 0; i < userIds.length; i += chunkSize) {
+                const chunk = userIds.slice(i, i + chunkSize);
+
+                let url = getUsersUrl +
+                    `?id=${chunk.map(id => encodeURIComponent(id)).join('&id=')}`;
+
+                await fetchData(url, !forceRefresh, 240).then(response => {
+                    const { data } = response ?? {};
+                    data?.forEach(user => {
+                        const li = document.querySelector(`#follow-${user.id}`);
+
+                        if (li) {
+                            li.dataset.profileImageUrl = user.profile_image_url;
+                            updateLink(li);
+                        }
+                    });
+                });
+            }
+        }
+
+        function sortList(parentUl) {
+            const ul = document.querySelector(`#${parentUl ?? 'subs'}`);
+            if (!ul) return;
+            const items = Array.from(ul.children);
+            items.sort((a, b) => {
+                const keyA = parseInt(a.dataset.sortKey || '0', 10);
+                const keyB = parseInt(b.dataset.sortKey || '0', 10);
+                return keyB - keyA; // higher tier first
+            });
+            items.forEach(item => ul.appendChild(item));
+        }
+
+        let token = null;
+
+        (async () => {
+            token = await getCachedToken();
+            if (token) {
+                document.body.classList.add('connected');
+                const status = document.getElementById('status');
+                fetchUserData().then(async userData => {
+                    status.textContent += ` Connected as ${userData.display_name}\n`;
+                    status.textContent += 'Fetching following...';
+                    await fetchFollowing(userData.id);
+                    const allChannelIds = Array.from(document.querySelectorAll('#all li')).map(li => li.dataset.id);
+                    status.textContent += ` Done, following ${allChannelIds.length}.\n`;
+                    status.textContent += 'Checking subscriptions...';
+                    await checkSubscriptions(userData.id, allChannelIds);
+                    status.textContent += ' Done.\n';
+                    status.textContent += 'Checking live statuses...';
+                    await checkLiveStatuses(allChannelIds);
+                    status.textContent += ' Done.\n';
+                    status.textContent += 'Grabbing images...';
+                    await fetchChannelImages(allChannelIds);
+                    status.textContent += ' Done.\n';
+                    status.textContent += 'All data loaded.';
+                });
+            }
+
+        })();
+    </script>
+</body>
+
+</html>
