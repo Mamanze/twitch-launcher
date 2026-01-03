@@ -159,6 +159,7 @@
         document.querySelector('#connect').setAttribute('href', connectUrl);
 
         const getFollowingUrl = 'https://api.twitch.tv/helix/channels/followed'; // GET user_id=
+        const getStreamsFollowedUrl = 'https://api.twitch.tv/helix/streams/followed'; // GET user_id=
         const getSubscriptionsUrl = 'https://api.twitch.tv/helix/subscriptions/user'; // GET broadcaster_id=
         const getUsersUrl = 'https://api.twitch.tv/helix/users'; // GET
         const getStreamsUrl = 'https://api.twitch.tv/helix/streams'; // GET user_id=
@@ -305,21 +306,31 @@
         }
 
         async function fetchFollowing(userId, after, forceRefresh = false) {
-            const url = getFollowingUrl +
-                `?user_id=${encodeURIComponent(userId)}` +
-                `&after=${encodeURIComponent(after ?? '')}`;
+            let url = getStreamsFollowedUrl +
+                `?user_id=${encodeURIComponent(userId)}`
+                + `&first=100`;
 
-            const response = await fetchData(url, !forceRefresh, 60);
+            if (after) {
+                url += `&after=${encodeURIComponent(after)}`;
+            }
+
+            const response = await fetchData(url, false).catch(() => null);
 
             const { data, pagination, total } = response ?? {};
             const ul = document.querySelector('#all');
             data?.forEach(async follow => {
                 const li = ul.appendChild(document.createElement('li'));
 
-                li.id = `follow-${follow.broadcaster_id}`;
-                li.dataset.id = follow.broadcaster_id;
-                li.dataset.name = follow.broadcaster_name;
+                li.id = `follow-${follow.user_id}`;
                 li.dataset.sortKey = '0';
+
+                if (follow.type === 'live') {
+                    li.classList.add('live');
+                    li.dataset.sortKey = '10000';
+                }
+
+                li.dataset.id = follow.user_id;
+                li.dataset.name = follow.user_name;
 
                 updateLink(li);
             });
@@ -414,12 +425,15 @@
 
         }
 
+        // Currently not used, switched to streams/followed endpoint which includes live status
         async function checkLiveStatuses(channelIds) {
             const chunkSize = 100; // Twitch API limit
             for (let i = 0; i < channelIds.length; i += chunkSize) {
                 const chunk = channelIds.slice(i, i + chunkSize);
                 function fetchPage(cursor) {
-                    let url = `${getStreamsUrl}?user_id=${chunk.map(id => encodeURIComponent(id)).join('&user_id=')}`;
+                    let url = getStreamsUrl + `?user_id=${chunk.map(id => encodeURIComponent(id)).join('&user_id=')}` +
+                        `&type=live` +
+                        `&first=100`;
                     if (cursor) {
                         url += `&after=${encodeURIComponent(cursor)}`;
                     }
@@ -452,7 +466,8 @@
                 const chunk = channelIds.slice(i, i + chunkSize);
 
                 let url = getUsersUrl +
-                    `?id=${chunk.map(id => encodeURIComponent(id)).join('&id=')}`;
+                    `?id=${chunk.map(id => encodeURIComponent(id)).join('&id=')}` +
+                    `&first=100`;
 
                 await fetchData(url, !forceRefresh, 240).then(response => {
                     const { data } = response ?? {};
@@ -662,9 +677,9 @@
                     status.textContent += 'Checking subscriptions...';
                     await checkSubscriptions(userData.id, allChannelIds);
                     status.textContent += ' Done.\n';
-                    status.textContent += 'Checking live statuses...';
-                    await checkLiveStatuses(allChannelIds);
-                    status.textContent += ' Done.\n';
+                    // status.textContent += 'Checking live statuses...';
+                    // await checkLiveStatuses(allChannelIds);
+                    // status.textContent += ' Done.\n';
                     status.textContent += 'Grabbing images...';
                     await fetchChannelImages(allChannelIds);
                     status.textContent += ' Done.\n';
