@@ -327,6 +327,7 @@
                 if (follow.type === 'live') {
                     li.classList.add('live');
                     li.dataset.sortKey = '10000';
+
                 }
 
                 li.dataset.id = follow.user_id;
@@ -334,6 +335,9 @@
 
                 updateLink(li);
             });
+
+            sortList(ul);
+
             if (pagination?.cursor) {
                 return fetchFollowing(userId, pagination.cursor);
             }
@@ -386,8 +390,8 @@
             li.appendChild(link);
         }
 
-        function checkSubscriptions(userId, channelIds, forceRefresh = false) {
-            channelIds.forEach(async broadcasterId => {
+        async function checkSubscriptions(userId, channelIds, forceRefresh = false) {
+            for(const broadcasterId of channelIds) {
                 const url = `${getSubscriptionsUrl}` +
                     `?broadcaster_id=${encodeURIComponent(broadcasterId)}` +
                     `&user_id=${encodeURIComponent(userId)}`
@@ -396,7 +400,7 @@
 
                 if (!response) {
                     // not subscribed
-                    return;
+                    continue;
                 }
 
                 const { data } = response ?? {};
@@ -415,14 +419,13 @@
                     }
                     li.dataset.tier = tier;
                     li.dataset.isGift = is_gift;
+                    const initialSortKey = li.dataset.sortKey || '0';
                     li.dataset.sortKey = sortKey;
 
                     updateLink(li);
                 }
-            });
-
+            }
             sortList('all');
-
         }
 
         // Currently not used, switched to streams/followed endpoint which includes live status
@@ -452,12 +455,11 @@
                         } else {
                             return Promise.resolve;
                         }
-                    }).then(() => {
-                        sortList('all');
                     });
                 }
                 await fetchPage('');
             }
+            sortList('all');
         }
 
         async function fetchChannelImages(channelIds, forceRefresh = false) {
