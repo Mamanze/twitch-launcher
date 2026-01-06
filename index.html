@@ -145,7 +145,10 @@
         <summary>Emotes (tap to copy)</summary>
         <div id="emote-container"></div>
     </details>
-    <div id="status">Loading...</div>
+    <details>
+        <summary>Log</summary>
+        <div id="status">Loading...</div>
+    </details>
 
     <script>
         const clientId = 'g4dz9iya0onjuxarj2d7ueaceq4x8w';
@@ -391,7 +394,7 @@
         }
 
         async function checkSubscriptions(userId, channelIds, forceRefresh = false) {
-            for(const broadcasterId of channelIds) {
+            for (const broadcasterId of channelIds) {
                 const url = `${getSubscriptionsUrl}` +
                     `?broadcaster_id=${encodeURIComponent(broadcasterId)}` +
                     `&user_id=${encodeURIComponent(userId)}`
